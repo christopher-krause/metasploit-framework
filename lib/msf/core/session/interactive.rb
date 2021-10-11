@@ -1,5 +1,4 @@
 # -*- coding: binary -*-
-require 'rex/ui'
 
 module Msf
 module Session
@@ -61,6 +60,13 @@ module Interactive
     end
   end
 
+  def comm_channel
+    return @comm_info if @comm_info
+    if rstream.respond_to?(:channel)
+      @comm_info = "via session #{rstream.channel.client.sid}" if rstream.channel.client.respond_to?(:sid)
+    end
+  end
+
   #
   # Run an arbitrary command as if it came from user input.
   #
@@ -110,7 +116,7 @@ protected
   def _interrupt
     begin
       intent = user_want_abort?
-      # Judge the user wants to abort the reverse shell session 
+      # Judge the user wants to abort the reverse shell session
       # Or just want to abort the process running on the target machine
       # If the latter, just send ASCII Control Character \u0003 (End of Text) to the socket fd
       # The character will be handled by the line dicipline program of the pseudo-terminal on target machine
@@ -118,16 +124,24 @@ protected
       if !intent
         # TODO: Check the shell is interactive or not
         # If the current shell is not interactive, the ASCII Control Character will not work
-        if !(self.platform=="windows" && self.type =="shell")
+        if abort_foreground_supported
           print_status("Aborting foreground process in the shell session")
-          self.rstream.write("\u0003")
+          abort_foreground
         end
         return
       end
     rescue Interrupt
       # The user hit ctrl-c while we were handling a ctrl-c. Ignore
     end
-    p ""
+    true
+  end
+
+  def abort_foreground_supported
+    true
+  end
+
+  def abort_foreground
+    self.rstream.write("\u0003")
   end
 
   def _usr1

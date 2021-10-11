@@ -7,25 +7,29 @@ class MetasploitModule < Msf::Post
   include Msf::Post::File
   include Msf::Post::Windows::Priv
 
-  def initialize(info={})
-    super(update_info(info,
-        'Name'          => 'Multi Manage File Compressor',
-        'Description'   => %q{
+  def initialize(info = {})
+    super(
+      update_info(
+        info,
+        'Name' => 'Multi Manage File Compressor',
+        'Description' => %q{
           This module zips a file or a directory. On Linux, it uses the zip command.
           On Windows, it will try to use remote target's 7Zip if found. If not, it falls
           back to its Windows Scripting Host.
         },
-        'License'       => MSF_LICENSE,
-        'Author'        => [ 'sinn3r' ],
-        'Platform'      => [ 'win', 'linux' ],
-        'SessionTypes'  => [ 'meterpreter', 'shell' ]
-    ))
+        'License' => MSF_LICENSE,
+        'Author' => [ 'sinn3r' ],
+        'Platform' => [ 'win', 'linux' ],
+        'SessionTypes' => [ 'meterpreter', 'shell' ]
+      )
+    )
 
     register_options(
       [
         OptString.new('DESTINATION', [true, 'The destination path']),
         OptString.new('SOURCE', [true, 'The directory or file to compress'])
-      ])
+      ]
+    )
   end
 
   def get_program_file_path
@@ -70,7 +74,7 @@ class MetasploitModule < Msf::Post
     rescue Rex::Post::Meterpreter::RequestError => e
       # It could raise an exception even when the token is successfully stolen,
       # so we will just log the exception and move on.
-      elog("#{e.class} #{e.message}\n#{e.backtrace * "\n"}")
+      elog(e)
     end
 
     @token_stolen = true
@@ -138,4 +142,3 @@ class MetasploitModule < Msf::Post
     end
   end
 end
-

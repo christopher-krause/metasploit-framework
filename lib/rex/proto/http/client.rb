@@ -1,10 +1,9 @@
 # -*- coding: binary -*-
 require 'rex/socket'
-require 'rex/proto/http'
+
 require 'rex/text'
 require 'digest'
 
-require 'rex/proto/http/client_request'
 
 module Rex
 module Proto
@@ -42,7 +41,7 @@ class Client
 
     # XXX: This info should all be controlled by ClientRequest
     self.config_types = {
-      'uri_encode_mode'        => ['hex-normal', 'hex-all', 'hex-random', 'u-normal', 'u-random', 'u-all'],
+      'uri_encode_mode'        => ['hex-normal', 'hex-all', 'hex-random', 'hex-noslashes', 'u-normal', 'u-random', 'u-all'],
       'uri_encode_count'       => 'integer',
       'uri_full_url'           => 'bool',
       'pad_method_uri_count'   => 'integer',
@@ -66,7 +65,8 @@ class Client
       'uri_fake_end'           => 'bool',
       'uri_fake_params_start'  => 'bool',
       'header_folding'         => 'bool',
-      'chunked_size'           => 'integer'
+      'chunked_size'           => 'integer',
+      'partial'                => 'bool'
     }
 
 
@@ -92,7 +92,7 @@ class Client
       # config.
 
       if(typ == 'bool')
-        val = (val =~ /^(t|y|1)$/i ? true : false || val === true)
+        val = (val == true || val.to_s =~ /^(t|y|1)/i)
       end
 
       if(typ == 'integer')
@@ -116,44 +116,42 @@ class Client
   # @option opts 'method'        [String] HTTP method to use in the request, not limited to standard methods defined by rfc2616, default: GET
   # @option opts 'proto'         [String] protocol, default: HTTP
   # @option opts 'query'         [String] raw query string
-  # @option opts 'raw_headers'   [Hash]   HTTP headers
+  # @option opts 'raw_headers'   [String] Raw HTTP headers
   # @option opts 'uri'           [String] the URI to request
   # @option opts 'version'       [String] version of the protocol, default: 1.1
   # @option opts 'vhost'         [String] Host header value
   #
   # @return [ClientRequest]
-  def request_raw(opts={})
+  def request_raw(opts = {})
     opts = self.config.merge(opts)
 
-    opts['ssl']         = self.ssl
-    opts['cgi']         = false
-    opts['port']        = self.port
+    opts['cgi'] = false
+    opts['port'] = self.port
+    opts['ssl'] = self.ssl
 
-    req = ClientRequest.new(opts)
+    ClientRequest.new(opts)
   end
-
 
   #
   # Create a CGI compatible request
   #
   # @param (see #request_raw)
   # @option opts (see #request_raw)
-  # @option opts 'ctype'         [String] Content-Type header value, default: +application/x-www-form-urlencoded+
+  # @option opts 'ctype'         [String] Content-Type header value, default for POST requests: +application/x-www-form-urlencoded+
   # @option opts 'encode_params' [Bool]   URI encode the GET or POST variables (names and values), default: true
   # @option opts 'vars_get'      [Hash]   GET variables as a hash to be translated into a query string
   # @option opts 'vars_post'     [Hash]   POST variables as a hash to be translated into POST data
   #
   # @return [ClientRequest]
-  def request_cgi(opts={})
+  def request_cgi(opts = {})
     opts = self.config.merge(opts)
 
-    opts['ctype']       ||= 'application/x-www-form-urlencoded'
-    opts['ssl']         = self.ssl
-    opts['cgi']         = true
-    opts['port']        = self.port
+    opts['cgi'] = true
+    opts['port'] = self.port
+    opts['ssl'] = self.ssl
+    opts['ctype'] ||= 'application/x-www-form-urlencoded' if opts['method'] == 'POST'
 
-    req = ClientRequest.new(opts)
-    req
+    ClientRequest.new(opts)
   end
 
   #
@@ -197,6 +195,7 @@ class Client
     end
 
     self.conn = nil
+    self.ntlm_client = nil
   end
 
   #
@@ -206,8 +205,8 @@ class Client
   # authentication and return the final response
   #
   # @return (see #_send_recv)
-  def send_recv(req, t = -1, persist=false)
-    res = _send_recv(req,t,persist)
+  def send_recv(req, t = -1, persist = false)
+    res = _send_recv(req, t, persist)
     if res and res.code == 401 and res.headers['WWW-Authenticate']
       res = send_auth(res, req.opts, t, persist)
     end
@@ -224,10 +223,18 @@ class Client
   # authentication handling.
   #
   # @return (see #read_response)
-  def _send_recv(req, t = -1, persist=false)
+  def _send_recv(req, t = -1, persist = false)
     @pipeline = persist
+    if req.opts['ntlm_transform_request'] and self.ntlm_client
+      req = req.opts['ntlm_transform_request'].call(self.ntlm_client, req)
+    end
+
     send_request(req, t)
+    
     res = read_response(t)
+    if req.opts['ntlm_transform_response'] and self.ntlm_client
+      req.opts['ntlm_transform_response'].call(self.ntlm_client, res)
+    end
     res.request = req.to_s if res
     res.peerinfo = peerinfo if res
     res
@@ -313,7 +320,7 @@ class Client
 
 
   def make_cnonce
-    Digest::MD5.hexdigest "%x" % (Time.now.to_i + rand(65535))
+    Digest::MD5.hexdigest "%x" % (::Time.now.to_i + rand(65535))
   end
 
   # Send a series of requests to complete Digest Authentication
@@ -489,10 +496,19 @@ class Client
     type1 = ntlm_client.init_context
 
     begin
-      # First request to get the challenge
-      opts['headers']['Authorization'] = provider + type1.encode64
+      # Separate options for the auth requests
+      auth_opts = opts.clone
+      auth_opts['headers'] = opts['headers'].clone
+      auth_opts['headers']['Authorization'] = provider + type1.encode64
 
-      r = request_cgi(opts)
+      if auth_opts['no_body_for_auth']
+        auth_opts.delete('data')
+        auth_opts.delete('ntlm_transform_request')
+        auth_opts.delete('ntlm_transform_response')
+      end
+
+      # First request to get the challenge
+      r = request_cgi(auth_opts)
       resp = _send_recv(r, to)
       unless resp.kind_of? Rex::Proto::Http::Response
         return nil
@@ -504,14 +520,21 @@ class Client
       ntlm_challenge = resp.headers['WWW-Authenticate'].scan(/#{provider}([A-Z0-9\x2b\x2f=]+)/ni).flatten[0]
       return resp unless ntlm_challenge
 
-      ntlm_message_3 = ntlm_client.init_context(ntlm_challenge)
+      ntlm_message_3 = ntlm_client.init_context(ntlm_challenge, channel_binding)
 
+      self.ntlm_client = ntlm_client
       # Send the response
-      opts['headers']['Authorization'] = "#{provider}#{ntlm_message_3.encode64}"
-      r = request_cgi(opts)
+      auth_opts['headers']['Authorization'] = "#{provider}#{ntlm_message_3.encode64}"
+      r = request_cgi(auth_opts)
       resp = _send_recv(r, to, true)
+
       unless resp.kind_of? Rex::Proto::Http::Response
         return nil
+      end
+      if opts['no_body_for_auth']
+        # If the body wasn't sent in the authentication, now do the actual request
+        r = request_cgi(opts)
+        resp = _send_recv(r, to, true)
       end
       return resp
 
@@ -520,21 +543,27 @@ class Client
     end
   end
 
-  #
+  def channel_binding
+    if !self.conn.respond_to?(:peer_cert) or self.conn.peer_cert.nil?
+      nil
+    else
+      Net::NTLM::ChannelBinding.create(OpenSSL::X509::Certificate.new(self.conn.peer_cert))
+    end
+  end
+
   # Read a response from the server
+  #
+  # Wait at most t seconds for the full response to be read in.
+  # If t is specified as a negative value, it indicates an indefinite wait cycle.
+  # If t is specified as nil or 0, it indicates no response parsing is required.
   #
   # @return [Response]
   def read_response(t = -1, opts = {})
+    # Return a nil response if timeout is nil or 0
+    return if t.nil? || t == 0
 
     resp = Response.new
     resp.max_data = config['read_max_data']
-
-    # Wait at most t seconds for the full response to be read in.  We only
-    # do this if t was specified as a negative value indicating an infinite
-    # wait cycle.  If t were specified as nil it would indicate that no
-    # response parsing is required.
-
-    return resp if not t
 
     Timeout.timeout((t < 0) ? nil : t) do
 
@@ -606,6 +635,9 @@ class Client
     end
 
     resp
+  rescue Timeout::Error
+    # Allow partial response due to timeout
+    resp if config['partial']
   end
 
   #
@@ -690,6 +722,11 @@ protected
   attr_accessor :ssl, :ssl_version # :nodoc:
 
   attr_accessor :hostname, :port # :nodoc:
+
+  #
+  # The established NTLM connection info
+  #
+  attr_accessor :ntlm_client
 
 end
 

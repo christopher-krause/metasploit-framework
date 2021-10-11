@@ -17,7 +17,7 @@ class MetasploitModule < Msf::Auxiliary
       },
       'Author'         => 'Patrik Karlsson <patrik[at]cqure.net>',
       'License'        => MSF_LICENSE,
-      'Actions'        => [ [ 'Capture' ] ],
+      'Actions'        => [[ 'Capture', 'Description' => 'Run MySQL capture server' ]],
       'PassiveActions' => [ 'Capture' ],
       'DefaultAction'  => 'Capture'
     )
@@ -58,7 +58,7 @@ class MetasploitModule < Msf::Auxiliary
   end
 
   def mysql_send_greeting(c)
-    # http://forge.mysql.com/wiki/MySQL_Internals_ClientServer_Protocol#Handshake_Initialization_Packet
+    # https://dev.mysql.com/doc/internals/en/connection-phase-packets.html
 
     length = 68 + @version.length
     packetno = 0
@@ -138,7 +138,7 @@ class MetasploitModule < Msf::Auxiliary
       module_fullname: fullname,
       username: opts[:user],
       private_data: opts[:password],
-      private_type: :password
+      private_type: :nonreplayable_hash
     }.merge(service_data)
 
     login_data = {
@@ -172,7 +172,7 @@ class MetasploitModule < Msf::Auxiliary
         port: datastore['SRVPORT'],
         service_name: 'mysql_client',
         user: info[:username],
-        pass: hash_line,
+        password: hash_line,
         proof: info[:database] ? info[:database] : hash_line
       )
 

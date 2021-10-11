@@ -1,11 +1,10 @@
 # -*- coding: binary -*-
 require 'rex/io/stream_abstraction'
 require 'rex/sync/ref'
-require 'rex/payloads/meterpreter/uri_checksum'
-require 'rex/post/meterpreter'
+
+require 'rex/post/meterpreter/core_ids'
 require 'rex/socket/x509_certificate'
-require 'msf/core/payload/windows/verify_ssl'
-require 'rex/user_agent'
+require 'uri'
 
 module Msf
 module Handler
@@ -19,6 +18,7 @@ module ReverseHttp
 
   include Msf::Handler
   include Msf::Handler::Reverse
+  include Msf::Handler::Reverse::Comm
   include Rex::Payloads::Meterpreter::UriChecksum
   include Msf::Payload::Windows::VerifySsl
 
@@ -70,7 +70,8 @@ module ReverseHttp
         OptString.new('HttpUserAgent',
           'The user-agent that the payload should use for communication',
           default: Rex::UserAgent.shortest,
-          aliases: ['MeterpreterUserAgent']
+          aliases: ['MeterpreterUserAgent'],
+          max_length: Rex::Payloads::Meterpreter::Config::UA_SIZE - 1
         ),
         OptString.new('HttpServerName',
           'The server header that the handler will send in response to requests',
@@ -118,9 +119,9 @@ module ReverseHttp
 
     # Extract whatever the client sent us in the Host header
     if req && req.headers && req.headers['Host']
-        callback_host, callback_port = req.headers['Host'].split(":")
-        callback_port = callback_port.to_i
-        callback_port ||= (ssl? ? 443 : 80)
+      cburi = URI("#{scheme}://#{req.headers['Host']}")
+      callback_host = cburi.host
+      callback_port = cburi.port
     end
 
     # Override the host and port as appropriate
@@ -154,6 +155,14 @@ module ReverseHttp
       "#{callback_scheme}://#{callback_host}:#{callback_port}"
     else
       "#{callback_scheme}://#{callback_host}"
+    end
+  end
+
+  def comm_string
+    if self.service.listener.nil?
+      "(setting up)"
+    else
+      via_string(self.service.listener.client) if self.service.listener.respond_to?(:client)
     end
   end
 
@@ -201,6 +210,7 @@ module ReverseHttp
     local_addr = nil
     local_port = bind_port
     ex = false
+    comm = select_comm
 
     # Start the HTTPS server service on this host/port
     bind_addresses.each do |ip|
@@ -211,8 +221,8 @@ module ReverseHttp
             'Msf'        => framework,
             'MsfExploit' => self,
           },
-          nil,
-          (ssl?) ? datastore['HandlerSSLCert'] : nil
+          comm,
+          (ssl?) ? datastore['HandlerSSLCert'] : nil, nil, nil, datastore['SSLVersion']
         )
         local_addr = ip
       rescue
@@ -239,7 +249,7 @@ module ReverseHttp
     lookup_proxy_settings
 
     if datastore['IgnoreUnknownPayloads']
-      print_status("Handler is ignoring unknown payloads, there are #{framework.uuid_db.keys.length} UUIDs whitelisted")
+      print_status("Handler is ignoring unknown payloads")
     end
   end
 
@@ -306,35 +316,48 @@ protected
     Thread.current[:cli] = cli
     resp = Rex::Proto::Http::Response.new
     info = process_uri_resource(req.relative_resource)
-    uuid = info[:uuid] || Msf::Payload::UUID.new
+    uuid = info[:uuid]
 
-    # Configure the UUID architecture and payload if necessary
-    uuid.arch      ||= self.arch
-    uuid.platform  ||= self.platform
+    if uuid
+      # Configure the UUID architecture and payload if necessary
+      uuid.arch      ||= self.arch
+      uuid.platform  ||= self.platform
 
-    conn_id = luri
-    if info[:mode] && info[:mode] != :connect
-      conn_id << generate_uri_uuid(URI_CHECKSUM_CONN, uuid)
-    else
-      conn_id << req.relative_resource
-      conn_id = conn_id.chomp('/')
-    end
-
-    request_summary = "#{conn_id} with UA '#{req.headers['User-Agent']}'"
-
-    # Validate known UUIDs for all requests if IgnoreUnknownPayloads is set
-    if datastore['IgnoreUnknownPayloads'] && ! framework.uuid_db[uuid.puid_hex]
-      print_status("Ignoring unknown UUID: #{request_summary}")
-      info[:mode] = :unknown_uuid
-    end
-
-    # Validate known URLs for all session init requests if IgnoreUnknownPayloads is set
-    if datastore['IgnoreUnknownPayloads'] && info[:mode].to_s =~ /^init_/
-      allowed_urls = framework.uuid_db[uuid.puid_hex]['urls'] || []
-      unless allowed_urls.include?(req.relative_resource)
-        print_status("Ignoring unknown UUID URL: #{request_summary}")
-        info[:mode] = :unknown_uuid_url
+      conn_id = luri
+      if info[:mode] && info[:mode] != :connect
+        conn_id << generate_uri_uuid(URI_CHECKSUM_CONN, uuid)
+      else
+        conn_id << req.relative_resource
+        conn_id = conn_id.chomp('/')
       end
+
+      request_summary = "#{conn_id} with UA '#{req.headers['User-Agent']}'"
+
+      # Validate known UUIDs for all requests if IgnoreUnknownPayloads is set
+      if framework.db.active
+        db_uuid = framework.db.payloads({ uuid: uuid.puid_hex }).first
+      else
+        print_warning('Without a database connected that payload UUID tracking will not work!')
+      end
+      if datastore['IgnoreUnknownPayloads'] && !db_uuid
+        print_status("Ignoring unknown UUID: #{request_summary}")
+        info[:mode] = :unknown_uuid
+      end
+
+      # Validate known URLs for all session init requests if IgnoreUnknownPayloads is set
+      if datastore['IgnoreUnknownPayloads'] && info[:mode].to_s =~ /^init_/
+        allowed_urls = db_uuid ? db_uuid['urls'] : []
+        unless allowed_urls && allowed_urls.include?(req.relative_resource.chomp('/'))
+          print_status("Ignoring unknown UUID URL: #{request_summary}")
+          info[:mode] = :unknown_uuid_url
+        end
+      end
+
+      url = payload_uri(req) + conn_id
+      url << '/' unless url[-1] == '/'
+
+    else
+      info[:mode] = :unknown
     end
 
     self.pending_connections += 1
@@ -342,9 +365,6 @@ protected
     resp.body = ''
     resp.code = 200
     resp.message = 'OK'
-
-    url = payload_uri(req) + conn_id
-    url << '/' unless url[-1] == '/'
 
     # Process the requested resource.
     case info[:mode]
@@ -356,8 +376,7 @@ protected
         # was generated on the fly. This means we form a new session for each.
 
         # Hurl a TLV back at the caller, and ignore the response
-        pkt = Rex::Post::Meterpreter::Packet.new(Rex::Post::Meterpreter::PACKET_TYPE_RESPONSE,
-                                                 'core_patch_url')
+        pkt = Rex::Post::Meterpreter::Packet.new(Rex::Post::Meterpreter::PACKET_TYPE_RESPONSE, Rex::Post::Meterpreter::COMMAND_ID_CORE_PATCH_URL)
         pkt.add_tlv(Rex::Post::Meterpreter::TLV_TYPE_TRANS_URL, conn_id + "/")
         resp.body = pkt.to_r
 
@@ -396,7 +415,7 @@ protected
         })
 
       else
-        unless [:unknown_uuid, :unknown_uuid_url].include?(info[:mode])
+        unless [:unknown, :unknown_uuid, :unknown_uuid_url].include?(info[:mode])
           print_status("Unknown request to #{request_summary}")
         end
         resp.body    = datastore['HttpUnknownRequestResponse'].to_s

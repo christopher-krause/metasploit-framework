@@ -24,7 +24,7 @@ class MetasploitModule < Msf::Auxiliary
       'License'     => MSF_LICENSE,
       'Actions'     =>
         [
-          [ 'Capture' ]
+          [ 'Capture', 'Description' => 'Run capture web server' ]
         ],
       'PassiveActions' =>
         [
@@ -94,7 +94,7 @@ class MetasploitModule < Msf::Auxiliary
         proof: req['Authorization']
       )
 
-      print_good("#{cli.peerhost} - Credential collected: \"#{user}:#{pass}\" => #{req.resource}")
+      print_good("HTTP Basic Auth LOGIN #{cli.peerhost} \"#{user}:#{pass}\" / #{req.resource}")
       if datastore['RedirectURL']
         print_status("Redirecting client #{cli.peerhost} to #{datastore['RedirectURL']}")
         send_redirect(cli, datastore['RedirectURL'])

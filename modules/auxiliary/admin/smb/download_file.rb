@@ -34,7 +34,7 @@ class MetasploitModule < Msf::Auxiliary
 
   def smb_download
     vprint_status("Connecting...")
-    connect(versions: [1, 2])
+    connect
     smb_login()
 
     vprint_status("#{peer}: Mounting the remote share \\\\#{rhost}\\#{datastore['SMBSHARE']}'...")
@@ -56,17 +56,19 @@ class MetasploitModule < Msf::Auxiliary
         path = store_loot("smb.shares.file", "application/octet-stream", rhost, data, fname)
         print_good("#{remote_path} saved as: #{path}")
       rescue Rex::Proto::SMB::Exceptions::ErrorCode => e
-        elog("#{e.class} #{e.message}\n#{e.backtrace * "\n"}")
+        elog("Unable to download #{remote_path}:", error: e)
         print_error("Unable to download #{remote_path}: #{e.message}")
       end
     end
   end
 
   def run_host(ip)
+    validate_rpaths!
+
     begin
       smb_download
     rescue Rex::Proto::SMB::Exceptions::LoginError => e
-      elog("#{e.class} #{e.message}\n#{e.backtrace * "\n"}")
+      elog("Unable to login: #{e.message}", error: e)
       print_error("Unable to login: #{e.message}")
     end
   end

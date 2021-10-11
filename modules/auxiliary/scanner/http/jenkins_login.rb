@@ -27,20 +27,15 @@ class MetasploitModule < Msf::Auxiliary
         Opt::RPORT(8080)
       ])
 
-    register_autofilter_ports([ 80, 443, 8080, 8081, 8000 ])
+    deregister_options('PASSWORD_SPRAY')
 
-    deregister_options('RHOST')
+    register_autofilter_ports([ 80, 443, 8080, 8081, 8000 ])
   end
 
   def run_host(ip)
-    cred_collection = Metasploit::Framework::CredentialCollection.new(
-      blank_passwords: datastore['BLANK_PASSWORDS'],
-      pass_file: datastore['PASS_FILE'],
-      password: datastore['PASSWORD'],
-      user_file: datastore['USER_FILE'],
-      userpass_file: datastore['USERPASS_FILE'],
+    cred_collection = build_credential_collection(
       username: datastore['USERNAME'],
-      user_as_pass: datastore['USER_AS_PASS']
+      password: datastore['PASSWORD']
     )
 
     scanner = Metasploit::Framework::LoginScanner::Jenkins.new(

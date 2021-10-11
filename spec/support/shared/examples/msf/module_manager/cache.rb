@@ -83,7 +83,7 @@ RSpec.shared_examples_for 'Msf::ModuleManager::Cache' do
     end
 
     let(:class_or_module) do
-      double('Class<Msf::Module> or Module', :parent => namespace_module)
+      double('Class<Msf::Module> or Module', :module_parent => namespace_module)
     end
 
     let(:namespace_module) do
@@ -177,8 +177,13 @@ RSpec.shared_examples_for 'Msf::ModuleManager::Cache' do
 
       it 'should enumerate loaders until if it find the one where loadable?(parent_path) is true' do
         # Only the first one gets it since it finds the module
-        loader = module_manager.send(:loaders).first
-        expect(loader).to receive(:loadable?).with(parent_path).and_call_original
+        first_loader = module_manager.send(:loaders).first
+        expect(first_loader).to receive(:loadable_module?).with(parent_path, type, reference_name).and_return(false)
+        expect(first_loader).not_to receive(:load_module)
+
+        second_loader = module_manager.send(:loaders).second
+        expect(second_loader).to receive(:loadable_module?).with(parent_path, type, reference_name).and_return(true)
+        expect(second_loader).to receive(:load_module).with(parent_path, type, reference_name, force: true).and_call_original
 
         load_cached_module
       end

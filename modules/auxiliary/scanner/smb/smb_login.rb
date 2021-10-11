@@ -15,6 +15,10 @@ class MetasploitModule < Msf::Auxiliary
   include Msf::Auxiliary::Report
   include Msf::Auxiliary::AuthBrute
 
+  Aliases = [
+    'auxiliary/scanner/smb/login'
+  ]
+
   def proto
     'smb'
   end
@@ -46,7 +50,6 @@ class MetasploitModule < Msf::Auxiliary
           'USER_AS_PASS'    => false
         }
     )
-    deregister_options('RHOST','USERNAME','PASSWORD')
 
     # These are normally advanced options, but for this module they have a
     # more active role, so make them regular options.
@@ -60,6 +63,7 @@ class MetasploitModule < Msf::Auxiliary
         OptBool.new('DETECT_ANY_DOMAIN', [false, 'Detect if domain is required for the specified user', false])
       ])
 
+    deregister_options('USERNAME','PASSWORD', 'PASSWORD_SPRAY')
   end
 
   def run_host(ip)
@@ -85,28 +89,21 @@ class MetasploitModule < Msf::Auxiliary
       bogus_result = @scanner.attempt_bogus_login(domain)
       if bogus_result.success?
         if bogus_result.access_level == Metasploit::Framework::LoginScanner::SMB::AccessLevels::GUEST
-          print_status("This system allows guest sessions with any credentials")
+          print_status("This system allows guest sessions with random credentials")
         else
-          print_error("This system accepts authentication with any credentials, brute force is ineffective.")
+          print_error("This system accepts authentication with random credentials, brute force is ineffective.")
           return
         end
       else
-        vprint_status('This system does not accept authentication with any credentials, proceeding with brute force')
+        vprint_status('This system does not accept authentication with random credentials, proceeding with brute force')
       end
     end
 
-    cred_collection = Metasploit::Framework::CredentialCollection.new(
-      blank_passwords: datastore['BLANK_PASSWORDS'],
-      pass_file: datastore['PASS_FILE'],
-      password: datastore['SMBPass'],
-      user_file: datastore['USER_FILE'],
-      userpass_file: datastore['USERPASS_FILE'],
-      username: datastore['SMBUser'],
-      user_as_pass: datastore['USER_AS_PASS'],
+    cred_collection = build_credential_collection(
       realm: domain,
+      username: datastore['SMBUser'],
+      password: datastore['SMBPass']
     )
-
-    cred_collection = prepend_db_passwords(cred_collection)
     cred_collection = prepend_db_hashes(cred_collection)
 
     @scanner.cred_details = cred_collection
@@ -141,6 +138,7 @@ class MetasploitModule < Msf::Auxiliary
             private: result.credential.private,
             realm_key: Metasploit::Model::Realm::Key::ACTIVE_DIRECTORY_DOMAIN,
             realm_value: result.credential.realm,
+            last_attempted_at: DateTime.now,
             status: result.status
         )
         :abort
@@ -156,6 +154,7 @@ class MetasploitModule < Msf::Auxiliary
           private: result.credential.private,
           realm_key: Metasploit::Model::Realm::Key::ACTIVE_DIRECTORY_DOMAIN,
           realm_value: result.credential.realm,
+          last_attempted_at: DateTime.now,
           status: result.status
         )
       end

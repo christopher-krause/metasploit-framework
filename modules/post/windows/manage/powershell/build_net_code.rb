@@ -3,9 +3,6 @@
 # Current source: https://github.com/rapid7/metasploit-framework
 ##
 
-require 'msf/core/post/windows/powershell'
-require 'msf/core/exploit/powershell/dot_net'
-
 class MetasploitModule < Msf::Post
   Rank = ExcellentRanking
 
@@ -16,21 +13,19 @@ class MetasploitModule < Msf::Post
     super(
       update_info(
         info,
-        'Name'           => "Powershell .NET Compiler",
-        'Description'    => %q(
+        'Name' => "Powershell .NET Compiler",
+        'Description' => %q{
           This module will build a .NET source file using powershell. The compiler builds
           the executable or library in memory and produces a binary. After compilation the
           PowerShell session can also sign the executable if provided a path the
           a .pfx formatted certificate. Compiler options and a list of assemblies
           required can be configured in the datastore.
-        ),
-        'License'        => MSF_LICENSE,
-        'Author'         => 'RageLtMan <rageltman[at]sempervictus>',
-        'Platform'       => [ 'windows' ],
-        'SessionTypes'   => [ 'meterpreter' ],
-        'Targets'        => [ [ 'Universal', {} ] ],
-        'DefaultTarget'  => 0,
-        'DisclosureDate' => 'Aug 14 2012'
+        },
+        'License' => MSF_LICENSE,
+        'Author' => 'RageLtMan <rageltman[at]sempervictus>',
+        'Platform' => [ 'windows' ],
+        'SessionTypes' => [ 'meterpreter' ],
+        'DisclosureDate' => '2012-08-14'
       )
     )
 
@@ -70,7 +65,7 @@ class MetasploitModule < Msf::Post
     net_com_opts = {}
     net_com_opts[:target] =
       datastore['OUTPUT_TARGET'] ||
-      "#{session.fs.file.expand_path('%TEMP%')}\\#{Rex::Text.rand_text_alpha(rand(8) + 8)}.exe"
+      "#{session.sys.config.getenv('TEMP')}\\#{Rex::Text.rand_text_alpha(rand(8) + 8)}.exe"
     net_com_opts[:com_opts] = datastore['COMPILER_OPTS']
     net_com_opts[:provider] = datastore['CODE_PROVIDER']
     net_com_opts[:assemblies] = datastore['ASSEMBLIES']

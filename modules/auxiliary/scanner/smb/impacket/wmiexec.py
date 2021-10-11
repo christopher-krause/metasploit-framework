@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Copyright (c) 2003-2018 CORE Security Technologies
 #
 # This software is provided under under a slightly modified version
@@ -90,19 +90,19 @@ class WMIEXEC:
         dcom = DCOMConnection(addr, self.__username, self.__password, self.__domain, self.__lmhash, self.__nthash,
                               self.__aesKey, oxidResolver=True, doKerberos=self.__doKerberos, kdcHost=self.__kdcHost)
         try:
-            iInterface = dcom.CoCreateInstanceEx(wmi.CLSID_WbemLevel1Login,wmi.IID_IWbemLevel1Login)
+            iInterface = dcom.CoCreateInstanceEx(wmi.CLSID_WbemLevel1Login, wmi.IID_IWbemLevel1Login)
             iWbemLevel1Login = wmi.IWbemLevel1Login(iInterface)
             iWbemServices= iWbemLevel1Login.NTLMLogin('//./root/cimv2', NULL, NULL)
             iWbemLevel1Login.RemRelease()
 
-            win32Process,_ = iWbemServices.GetObject('Win32_Process')
+            win32Process, _ = iWbemServices.GetObject('Win32_Process')
 
             self.shell = RemoteShell(self.__share, win32Process, smbConnection)
             if self.__command != ' ':
                 self.shell.onecmd(self.__command)
             else:
                 self.shell.cmdloop()
-        except (Exception, KeyboardInterrupt), e:
+        except (Exception, KeyboardInterrupt) as e:
             logging.error(str(e))
 
         if smbConnection is not None:
@@ -118,10 +118,10 @@ class RemoteShell(_msf_impacket.RemoteShell):
         super(RemoteShell, self).__init__(share, smbConnection)
 
     def execute_remote(self, data):
-        command = self._shell + data 
+        command = self._shell + data
         if self._noOutput is False:
             command += ' 1> ' + '\\\\127.0.0.1\\%s' % self._share + self._output  + ' 2>&1'
-        self.__win32Process.Create(command.decode('utf-8'), self._pwd, None)
+        self.__win32Process.Create(command, self._pwd, None)
         self.get_output()
 
 
@@ -131,7 +131,7 @@ def run(args):
         return
 
     _msf_impacket.pre_run_hook(args)
-    executer = WMIEXEC(args['COMMAND'], args['SMBUser'], args['SMBPass'], args['SMBDomain'], 
+    executer = WMIEXEC(args['COMMAND'], args['SMBUser'], args['SMBPass'], args['SMBDomain'],
                         share='ADMIN$', noOutput=args['OUTPUT'] != 'true')
     executer.run(args['rhost'])
 

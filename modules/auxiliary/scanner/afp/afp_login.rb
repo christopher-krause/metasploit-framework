@@ -29,7 +29,6 @@ class MetasploitModule < Msf::Auxiliary
       'License'      => MSF_LICENSE
     ))
 
-    deregister_options('RHOST')
     register_options(
       [
         Opt::Proxies,
@@ -38,22 +37,16 @@ class MetasploitModule < Msf::Auxiliary
         OptBool.new('CHECK_GUEST', [ false, "Check for guest login", true])
       ], self)
 
+    deregister_options('PASSWORD_SPRAY')
   end
 
   def run_host(ip)
     print_status("Scanning IP: #{ip.to_s}")
 
-    cred_collection = Metasploit::Framework::CredentialCollection.new(
-        blank_passwords: datastore['BLANK_PASSWORDS'],
-        pass_file: datastore['PASS_FILE'],
-        password: datastore['PASSWORD'],
-        user_file: datastore['USER_FILE'],
-        userpass_file: datastore['USERPASS_FILE'],
+    cred_collection = build_credential_collection(
         username: datastore['USERNAME'],
-        user_as_pass: datastore['USER_AS_PASS'],
+        password: datastore['PASSWORD'],
     )
-
-    cred_collection = prepend_db_passwords(cred_collection)
 
     scanner = Metasploit::Framework::LoginScanner::AFP.new(
         host: ip,

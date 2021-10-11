@@ -1,5 +1,4 @@
 require 'json'
-require 'msf/core/rpc'
 
 module Msf::RPC::JSON
   class Dispatcher
@@ -111,6 +110,10 @@ module Msf::RPC::JSON
         end
 
         response
+      rescue Msf::OptionValidateError => e
+        raise InvalidParams.new(data: { options: e.options, message: e.message })
+      rescue ::NoMethodError => e
+        raise MethodNotFound.new(e.name, data: { method: e.name, message: e.message })
       rescue ArgumentError
         raise InvalidParams.new
       rescue Msf::RPC::Exception => e
@@ -120,7 +123,7 @@ module Msf::RPC::JSON
 
     # Validate the JSON-RPC request.
     # @param request [Hash] the JSON-RPC request
-    # @returns [Boolean] true if the JSON-RPC request is a valid; otherwise, false.
+    # @returns [Boolean] true if the JSON-RPC request is valid; otherwise, false.
     def validate_rpc_request(request)
       # validate request is an object
       return false unless request.is_a?(Hash)

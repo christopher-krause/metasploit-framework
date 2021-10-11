@@ -2,6 +2,7 @@
 require 'tempfile'
 require 'filesize'
 require 'rex/post/meterpreter'
+require 'rex/post/meterpreter/extensions/stdapi/command_ids'
 
 module Rex
 module Post
@@ -18,6 +19,7 @@ class Console::CommandDispatcher::Stdapi::Fs
   Klass = Console::CommandDispatcher::Stdapi::Fs
 
   include Console::CommandDispatcher
+  include Rex::Post::Meterpreter::Extensions::Stdapi
 
   CHECKSUM_ALGORITHMS = %w{ md5 sha1 }
   private_constant :CHECKSUM_ALGORITHMS
@@ -42,7 +44,7 @@ class Console::CommandDispatcher::Stdapi::Fs
   @@upload_opts = Rex::Parser::Arguments.new(
     "-h" => [ false, "Help banner" ],
     "-r" => [ false, "Upload recursively" ])
-  
+
   #
   # Options for the ls command
   #
@@ -98,28 +100,28 @@ class Console::CommandDispatcher::Stdapi::Fs
 
     reqs = {
       'cat'        => [],
-      'cd'         => ['stdapi_fs_chdir'],
-      'checksum'   => CHECKSUM_ALGORITHMS.map { |a| "stdapi_fs_#{a}" },
-      'del'        => ['stdapi_fs_rm'],
-      'dir'        => ['stdapi_fs_stat', 'stdapi_fs_ls'],
+      'cd'         => [COMMAND_ID_STDAPI_FS_CHDIR],
+      'checksum'   => [COMMAND_ID_STDAPI_FS_MD5, COMMAND_ID_STDAPI_FS_SHA1],
+      'del'        => [COMMAND_ID_STDAPI_FS_DELETE_FILE],
+      'dir'        => [COMMAND_ID_STDAPI_FS_STAT, COMMAND_ID_STDAPI_FS_LS],
       'download'   => [],
       'edit'       => [],
       'getlwd'     => [],
-      'getwd'      => ['stdapi_fs_getwd'],
+      'getwd'      => [COMMAND_ID_STDAPI_FS_GETWD],
       'lcd'        => [],
       'lpwd'       => [],
-      'ls'         => ['stdapi_fs_stat', 'stdapi_fs_ls'],
+      'ls'         => [COMMAND_ID_STDAPI_FS_STAT, COMMAND_ID_STDAPI_FS_LS],
       'lls'        => [],
-      'mkdir'      => ['stdapi_fs_mkdir'],
-      'pwd'        => ['stdapi_fs_getwd'],
-      'rmdir'      => ['stdapi_fs_delete_dir'],
-      'rm'         => ['stdapi_fs_delete_file'],
-      'mv'         => ['stdapi_fs_file_move'],
-      'cp'         => ['stdapi_fs_file_copy'],
-      'chmod'      => ['stdapi_fs_chmod'],
-      'search'     => ['stdapi_fs_search'],
+      'mkdir'      => [COMMAND_ID_STDAPI_FS_MKDIR],
+      'pwd'        => [COMMAND_ID_STDAPI_FS_GETWD],
+      'rmdir'      => [COMMAND_ID_STDAPI_FS_DELETE_DIR],
+      'rm'         => [COMMAND_ID_STDAPI_FS_DELETE_FILE],
+      'mv'         => [COMMAND_ID_STDAPI_FS_FILE_MOVE],
+      'cp'         => [COMMAND_ID_STDAPI_FS_FILE_COPY],
+      'chmod'      => [COMMAND_ID_STDAPI_FS_CHMOD],
+      'search'     => [COMMAND_ID_STDAPI_FS_SEARCH],
       'upload'     => [],
-      'show_mount' => ['stdapi_fs_mount_show'],
+      'show_mount' => [COMMAND_ID_STDAPI_FS_MOUNT_SHOW],
     }
 
     filter_commands(all, reqs)
@@ -132,6 +134,14 @@ class Console::CommandDispatcher::Stdapi::Fs
     "Stdapi: File system"
   end
 
+  def vali_date(str)
+    result = DateTime.parse(str)
+    return result.to_time.to_i
+  rescue
+    print_error("Bad date/time specification (#{str}). Use this format: \"YYYY-mm-dd\" or \"YYYY-mm-ddTHH:MM:SS\", e.g \"1970-01-01\"")
+    nil
+  end
+
   #
   # Search for files.
   #
@@ -141,12 +151,16 @@ class Console::CommandDispatcher::Stdapi::Fs
     recurse = true
     globs   = []
     files   = []
+    modified_start_date = nil
+    modified_end_date = nil
 
     opts = Rex::Parser::Arguments.new(
       "-h" => [ false, "Help Banner" ],
       "-d" => [ true,  "The directory/drive to begin searching from. Leave empty to search all drives. (Default: #{root})" ],
       "-f" => [ true,  "A file pattern glob to search for. (e.g. *secret*.doc?)" ],
-      "-r" => [ true,  "Recursivly search sub directories. (Default: #{recurse})" ]
+      "-r" => [ true,  "Recursively search sub directories. (Default: #{recurse})" ],
+      "-a" => [ true,  "Find files modified after timestamp (UTC).  Format: YYYY-mm-dd or YYYY-mm-ddTHH:MM:SS"],
+      "-b" => [ true,  "Find files modified before timestamp (UTC). Format: YYYY-mm-dd or YYYY-mm-ddTHH:MM:SS"]
     )
 
     opts.parse(args) { | opt, idx, val |
@@ -162,6 +176,12 @@ class Console::CommandDispatcher::Stdapi::Fs
           globs << val
         when "-r"
           recurse = false if val =~ /^(f|n|0)/i
+        when "-a"
+          modified_start_date = vali_date(val)
+          return unless modified_start_date
+        when "-b"
+          modified_end_date = vali_date(val)
+          return unless modified_end_date
       end
     }
 
@@ -171,7 +191,7 @@ class Console::CommandDispatcher::Stdapi::Fs
     end
 
     globs.uniq.each do |glob|
-      files += client.fs.file.search(root, glob, recurse)
+      files += client.fs.file.search(root, glob, recurse, -1, modified_start_date, modified_end_date)
     end
 
     if files.empty?
@@ -179,15 +199,27 @@ class Console::CommandDispatcher::Stdapi::Fs
       return
     end
 
-    print_line("Found #{files.length} result#{ files.length > 1 ? 's' : '' }...")
-    files.each do | file |
-      if file['size'] > 0
-        print("    #{file['path']}#{ file['path'].empty? ? '' : '\\' }#{file['name']} (#{file['size']} bytes)\n")
-      else
-        print("    #{file['path']}#{ file['path'].empty? ? '' : '\\' }#{file['name']}\n")
-      end
-    end
+    header = "Found #{files.length} result#{ files.length > 1 ? 's' : '' }..."
+    results_table = Rex::Text::Table.new(
+        'WordWrap'   => false,
+        'Width'      => 120,
+        'Header'     => header,
+        'Indent'     => 0,
+        'SortIndex'  => 0,
+        'Columns'    => ['Path', 'Size (bytes)', 'Modified (UTC)'],
+    )
 
+    files.each do | file |
+      filestr = ''
+      unless file['path'].empty?
+        filestr += "#{file['path']}#{client.fs.file.separator}"
+      end
+      filestr += file['name']
+      datestr = ''
+      datestr = Time.at(file['mtime']).to_s if file['mtime']
+      results_table << [filestr, file['size'], datestr]
+    end
+    print_line results_table.to_s
   end
 
   #
@@ -436,7 +468,6 @@ class Console::CommandDispatcher::Stdapi::Fs
     src_items = []
     last      = nil
     dest      = nil
-    continue  = false
     tries     = false
     tries_no  = 0
     opts      = {}
@@ -451,7 +482,6 @@ class Console::CommandDispatcher::Stdapi::Fs
         recursive = true
         opts['recursive'] = true
       when "-c"
-        continue = true
         opts['continue'] = true
       when "-l"
         tries = true
@@ -459,7 +489,7 @@ class Console::CommandDispatcher::Stdapi::Fs
         opts['tries'] = true
         opts['tries_no'] = tries_no
       when "-t"
-        opts['timestamp'] = '_' + Time.now.iso8601
+        opts['timestamp'] = '_' + ::Time.now.iso8601
       when nil
         src_items << last if (last)
         last = val
@@ -487,6 +517,9 @@ class Console::CommandDispatcher::Stdapi::Fs
       dest = ::File.dirname(dest)
     end
 
+    # Expand the destination file path
+    dest = ::File.expand_path(dest)
+
     # Go through each source item and download them
     src_items.each { |src|
       glob = nil
@@ -498,7 +531,7 @@ class Console::CommandDispatcher::Stdapi::Fs
       # Use search if possible for recursive pattern matching. It will work
       # more intuitively since it will not try to match on intermediate
       # directories, only file names.
-      if glob && recursive && client.commands.include?('stdapi_fs_search')
+      if glob && recursive && client.commands.include?(COMMAND_ID_STDAPI_FS_SEARCH)
 
         files = client.fs.file.search(src, glob, recursive)
         if !files.empty?
@@ -616,7 +649,7 @@ class Console::CommandDispatcher::Stdapi::Fs
     end
 
     tbl = Rex::Text::Table.new(
-      'Header'  => "Listing: #{path}",
+      'Header'  => "Listing: #{path}".force_encoding('UTF-8'),
       'SortIndex' => columns.index(sort),
       'SortOrder' => order,
       'Columns' => columns,
@@ -636,7 +669,7 @@ class Console::CommandDispatcher::Stdapi::Fs
           ffstat ? ffstat.size       : '',
           ffstat ? ffstat.ftype[0,3] : '',
           ffstat ? ffstat.mtime      : '',
-          fname
+          fname.force_encoding('UTF-8')
         ]
       row.insert(4, p['FileShortName'] || '') if short
 
@@ -712,6 +745,7 @@ class Console::CommandDispatcher::Stdapi::Fs
         return 0
       when nil
         path = val
+        path = client.fs.file.expand_path(path) if path =~ PATH_EXPAND_REGEX
       end
     }
 
@@ -723,7 +757,7 @@ class Console::CommandDispatcher::Stdapi::Fs
     # Check session capabilities
     is_glob = client.fs.file.is_glob?(path)
     if is_glob
-      if !client.commands.include?('stdapi_fs_search')
+      if !client.commands.include?(COMMAND_ID_STDAPI_FS_SEARCH)
         print_line('File globbing not supported with this session')
         return
       end
@@ -975,6 +1009,7 @@ class Console::CommandDispatcher::Stdapi::Fs
 
     # Go through each source item and upload them
     src_items.each { |src|
+      src = ::File.expand_path(src)
       stat = ::File.stat(src)
 
       if (stat.directory?)
@@ -1012,7 +1047,7 @@ class Console::CommandDispatcher::Stdapi::Fs
   # sometimes it wouldn't execute successfully especailly on bad network.
   #
   def tab_complete_cfilenames(str, words)
-    if client.commands.include?('stdapi_fs_ls')
+    if client.commands.include?(COMMAND_ID_STDAPI_FS_LS)
       return client.fs.dir.match(str) rescue nil
     end
 
@@ -1023,7 +1058,7 @@ class Console::CommandDispatcher::Stdapi::Fs
   # Provide a generic tab completion for client directory names.
   #
   def tab_complete_cdirectory(str, words)
-    if client.commands.include?('stdapi_fs_ls')
+    if client.commands.include?(COMMAND_ID_STDAPI_FS_LS)
       return client.fs.dir.match(str, true) rescue nil
     end
 

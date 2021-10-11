@@ -3,8 +3,6 @@
 # Current source: https://github.com/rapid7/metasploit-framework
 ##
 
-#require 'msf/core'
-#require 'msf/core/post/file'
 require 'sshkey'
 
 class MetasploitModule < Msf::Post
@@ -17,23 +15,17 @@ class MetasploitModule < Msf::Post
     super(
       update_info(
         info,
-        'Name'           => 'SSH Key Persistence',
-        'Description'    => %q{
+        'Name' => 'SSH Key Persistence',
+        'Description' => %q{
           This module will add an SSH key to a specified user (or all), to allow
           remote login via SSH at any time.
         },
-        'License'        => MSF_LICENSE,
-        'Author'         =>
-          [
-            'h00die <mike@shorebreaksecurity.com>'
-          ],
-        'Platform'       => [ 'linux' ],
-        'SessionTypes'   => [ 'meterpreter', 'shell' ],
-        'Targets'        =>
-          [
-            [ 'Automatic', {} ]
-          ],
-        'DefaultTarget'  => 0
+        'License' => MSF_LICENSE,
+        'Author' => [
+          'h00die <mike@shorebreaksecurity.com>'
+        ],
+        'Platform' => [ 'linux' ],
+        'SessionTypes' => [ 'meterpreter', 'shell' ]
       )
     )
 

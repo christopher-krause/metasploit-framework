@@ -1,5 +1,5 @@
 # -*- coding: binary -*-
-require 'rex/ui'
+require 'rex/text/color'
 
 module Rex
 module Ui
@@ -12,6 +12,8 @@ module Text
 #
 ###
 module Shell
+
+  include Rex::Text::Color
 
   ###
   #
@@ -38,11 +40,12 @@ module Shell
   #
   # Initializes a shell that has a prompt and can be interacted with.
   #
-  def initialize(prompt, prompt_char = '>', histfile = nil, framework = nil)
+  def initialize(prompt, prompt_char = '>', histfile = nil, framework = nil, name = nil)
     # Set the stop flag to false
     self.stop_flag      = false
     self.disable_output = false
     self.stop_count     = 0
+    self.name = name
 
     # Initialize the prompt
     self.cont_prompt = ' > '
@@ -53,6 +56,10 @@ module Shell
     self.histfile = histfile
     self.hist_last_saved = 0
 
+    # Static prompt variables
+    self.local_hostname = ENV['HOSTNAME'] || `hostname`.split('.')[0] || ENV['COMPUTERNAME']
+    self.local_username = ENV['USER'] || `whoami` || ENV['USERNAME']
+
     self.framework = framework
   end
 
@@ -60,12 +67,6 @@ module Shell
     if (self.input and self.input.supports_readline)
       # Unless cont_flag because there's no tab complete for continuation lines
       self.input = Input::Readline.new(lambda { |str| tab_complete(str) unless cont_flag })
-      if Readline::HISTORY.length == 0 and histfile and File.exist?(histfile)
-        File.readlines(histfile).each { |e|
-          Readline::HISTORY << e.chomp
-        }
-        self.hist_last_saved = Readline::HISTORY.length
-      end
       self.input.output = self.output
     end
   end
@@ -121,6 +122,16 @@ module Shell
   # Run the command processing loop.
   #
   def run(&block)
+    begin
+      require 'pry'
+      # pry history will not be loaded by default when pry is used as a breakpoint like `binding.pry`
+      Pry.config.history_load = false
+    rescue LoadError
+      # Pry is a development dependency, if not available suppressing history_load can be safely ignored.
+    end
+
+    HistoryManager.push_context(history_file: histfile, name: name)
+    self.hist_last_saved = Readline::HISTORY.length
 
     begin
 
@@ -138,23 +149,17 @@ module Shell
         if input.eof? || line == nil
           self.stop_count += 1
           next if self.stop_count > 1
-          run_single("quit")
+          run_single('quit')
 
         # If a block was passed in, pass the line to it.  If it returns true,
         # break out of the shell loop.
         elsif block
           break if block.call(line)
 
-        # Otherwise, call what should be an overriden instance method to
+        # Otherwise, call what should be an overridden instance method to
         # process the line.
         else
-          ret = run_single(line)
-          # don't bother saving lines that couldn't be found as a
-          # command, create the file if it doesn't exist, don't save dupes
-          if ret && self.histfile && line != @last_line
-            File.open(self.histfile, "a+") { |f| f.puts(line) }
-            @last_line = line
-          end
+          run_single(line)
           self.stop_count = 0
         end
 
@@ -163,6 +168,10 @@ module Shell
     rescue ::Interrupt
       output.print("Interrupt: use the 'exit' command to quit\n")
       retry
+    ensure
+      HistoryManager.pop_context
+      HistoryManager.flush
+      self.hist_last_saved = Readline::HISTORY.length
     end
   end
 
@@ -187,7 +196,7 @@ module Shell
   # new_prompt_char the char to append to the prompt
   def update_prompt(new_prompt = self.prompt, new_prompt_char = self.prompt_char)
     if (self.input)
-      p = new_prompt + ' ' + new_prompt_char + ' '
+      p = substitute_colors(new_prompt + ' ' + new_prompt_char + ' ', true)
 
       # Save the prompt before any substitutions
       self.prompt = new_prompt
@@ -283,8 +292,13 @@ module Shell
   attr_accessor :on_command_proc
   attr_accessor :on_print_proc
   attr_accessor :framework
+  attr_accessor :hist_last_saved # the number of history lines when last saved/loaded
 
-protected
+  protected
+
+  def supports_color?
+    true
+  end
 
   #
   # Get a single line of input, following continuation directives as necessary.
@@ -380,38 +394,92 @@ protected
   # Handle prompt substitutions
   #
   def format_prompt(str)
-    if framework
-      if str.include?("%T")
-        t = Time.now
-        # This %T is the strftime shorthand for %H:%M:%S
-        format = framework.datastore['PromptTimeFormat'] || "%T"
-        t = t.strftime(format)
-        # This %T is the marker in the prompt where we need to place the time
-        str.gsub!(/%T/, t.to_s)
+    return str unless framework
+
+    # find the active session
+    session = framework.sessions.values.find { |session| session.interacting }
+    default = 'unknown'
+
+    formatted = ''
+    skip_next = false
+    for prefix, spec in str.split('').each_cons(2) do
+      if skip_next
+        skip_next = false
+        next
       end
 
-      if str.include?("%H")
-        hostname = ENV['HOSTNAME'] || `hostname`.split('.')[0] ||
-          ENV['COMPUTERNAME'] || 'unknown'
-
-        str.gsub!(/%H/, hostname.chomp)
+      unless prefix == '%'
+        formatted << prefix
+        skip_next = false
+        next
       end
 
-      if str.include?("%U")
-        user = ENV['USER'] || `whoami` || ENV['USERNAME'] || 'unknown'
-        str.gsub!(/%U/, user.chomp)
-      end
+      skip_next = true
+      if spec == 'T'
+        if framework.datastore['PromptTimeFormat']
+          strftime_format = framework.datastore['PromptTimeFormat']
+        else
+          strftime_format = ::Time::DATE_FORMATS[:db].to_s
+        end
+        formatted << ::Time.now.strftime(strftime_format).to_s
+      elsif spec == 'W' && framework.db.active
+        formatted << framework.db.workspace.name
+      elsif session
+        sysinfo = session.respond_to?(:sys) ? session.sys.config.sysinfo : nil
 
-      str.gsub!(/%S/, framework.sessions.length.to_s)
-      str.gsub!(/%J/, framework.jobs.length.to_s)
-      str.gsub!(/%L/, Rex::Socket.source_address("50.50.50.50"))
-      str.gsub!(/%D/, ::Dir.getwd)
-      if framework.db.active
-        str.gsub!(/%W/, framework.db.workspace.name)
+        case spec
+        when 'A'
+          formatted << (sysinfo.nil? ? default : sysinfo['Architecture'])
+        when 'D'
+          formatted << (session.respond_to?(:fs) ? session.fs.dir.getwd(refresh: false) : default)
+        when 'd'
+          formatted << ::Dir.getwd
+        when 'H'
+          formatted << (sysinfo.nil? ? default : sysinfo['Computer'])
+        when 'h'
+          formatted << (self.local_hostname || default).chomp
+        when 'I'
+          formatted << session.tunnel_peer
+        when 'i'
+          formatted << session.tunnel_local
+        when 'M'
+          formatted << session.session_type
+        when 'S'
+          formatted << session.sid.to_s
+        when 'U'
+          formatted << (session.respond_to?(:sys) ? session.sys.config.getuid(refresh: false) : default)
+        when 'u'
+          formatted << (self.local_username || default).chomp
+        else
+          formatted << prefix
+          skip_next = false
+        end
+      else
+        case spec
+        when 'H'
+          formatted << (self.local_hostname || default).chomp
+        when 'J'
+          formatted << framework.jobs.length.to_s
+        when 'U'
+          formatted << (self.local_username || default).chomp
+        when 'S'
+          formatted << framework.sessions.length.to_s
+        when 'L'
+          formatted << Rex::Socket.source_address
+        when 'D'
+          formatted << ::Dir.getwd
+        else
+          formatted << prefix
+          skip_next = false
+        end
       end
     end
 
-    str
+    if str.length > 0 && !skip_next
+      formatted << str[-1]
+    end
+
+    formatted
   end
 
   attr_writer   :input, :output # :nodoc:
@@ -419,25 +487,14 @@ protected
   attr_accessor :stop_flag, :cont_prompt # :nodoc:
   attr_accessor :tab_complete_proc # :nodoc:
   attr_accessor :histfile # :nodoc:
-  attr_accessor :hist_last_saved # the number of history lines when last saved/loaded
   attr_accessor :log_source, :stop_count # :nodoc:
+  attr_accessor :local_hostname, :local_username # :nodoc:
   attr_reader   :cont_flag # :nodoc:
-
+  attr_accessor :name
 private
 
   attr_writer   :cont_flag # :nodoc:
 
 end
 
-###
-#
-# Pseudo-shell interface that simply includes the Shell mixin.
-#
-###
-class PseudoShell
-  include Shell
-end
-
-
 end end end
-

